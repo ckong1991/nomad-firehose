@@ -194,7 +194,7 @@ func (f *Firehose) watch() {
 						TaskFailed:         taskInfo.Failed,
 						TaskStartedAt:      &taskInfo.StartedAt,
 						TaskFinishedAt:     &taskInfo.FinishedAt,
-						ModifyTime:         allocation.ModifyTime
+						ModifyTime:         allocation.ModifyTime,
 					}
 
 					f.publish(payload)
@@ -202,6 +202,11 @@ func (f *Firehose) watch() {
 				}
 
 				if !has_published && allocation.ModifyTime >= f.lastChangeTime {
+
+					if allocation.ModifyTime > newMax {
+						newMax = allocation.ModifyTime
+					}
+
 					payload := &AllocationUpdate{
 						Name:               allocation.Name,
 						NodeID:             allocation.NodeID,
