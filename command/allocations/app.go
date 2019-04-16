@@ -12,7 +12,7 @@ import (
 
 // Firehose ...
 type Firehose struct {
-	lastChangeTime   int64
+	lastChangeIndex   uint64
 	lastChangeTimeCh chan interface{}
 	nomadClient      *nomad.Client
 	sink             sink.Sink
@@ -29,14 +29,9 @@ type AllocationUpdate struct {
 	ClientStatus       string
 	ClientDescription  string
 	JobID              string
-	GroupName          string
-	TaskName           string
+	TaskGroup          string
 	EvalID             string
-	TaskState          string
-	TaskFailed         bool
-	TaskStartedAt      *time.Time
-	TaskFinishedAt     *time.Time
-	TaskEvent          *nomad.TaskEvent
+	TaskStates         map[string]*nomad.TaskState
 	ModifyTime		   int64
 }
 
@@ -71,9 +66,9 @@ func (f *Firehose) UpdateCh() <-chan interface{} {
 func (f *Firehose) SetRestoreValue(restoreValue interface{}) error {
 	switch restoreValue.(type) {
 	case int:
-		f.lastChangeTime = int64(restoreValue.(int))
+		f.lastChangeIndex = uint64(restoreValue.(int))
 	case int64:
-		f.lastChangeTime = restoreValue.(int64)
+		f.lastChangeIndex = uint64(restoreValue.(int64))
 	default:
 		return fmt.Errorf("Unknown restore type '%T' with value '%+v'", restoreValue, restoreValue)
 	}
@@ -117,10 +112,10 @@ func (f *Firehose) persistLastChangeTime(interval time.Duration) {
 	for {
 		select {
 		case <-f.stopCh:
-			f.lastChangeTimeCh <- f.lastChangeTime
+			f.lastChangeTimeCh <- f.lastChangeIndex
 			break
 		case <-ticker.C:
-			f.lastChangeTimeCh <- f.lastChangeTime
+			f.lastChangeTimeCh <- f.lastChangeIndex
 		}
 	}
 }
@@ -138,12 +133,12 @@ func (f *Firehose) publish(update *AllocationUpdate) {
 // Continously watch for changes to the allocation list and publish it as updates
 func (f *Firehose) watch() {
 	q := &nomad.QueryOptions{
-		WaitIndex:  1,
+		WaitIndex:  f.lastChangeIndex,
 		WaitTime:   5 * time.Minute,
 		AllowStale: true,
 	}
 
-	newMax := f.lastChangeTime
+	newMax := f.lastChangeIndex
 
 	for {
 		allocations, meta, err := f.nomadClient.Allocations().List(q)
@@ -166,75 +161,34 @@ func (f *Firehose) watch() {
 
 		// Iterate allocations and find events that have changed since last run
 		for _, allocation := range allocations {
-			has_published := false
-			for taskName, taskInfo := range allocation.TaskStates {
-				for _, taskEvent := range taskInfo.Events {
-					if taskEvent.Time <= f.lastChangeTime {
-						continue
-					}
-
-					if taskEvent.Time > newMax {
-						newMax = taskEvent.Time
-					}
-
-					payload := &AllocationUpdate{
-						Name:               allocation.Name,
-						NodeID:             allocation.NodeID,
-						AllocationID:       allocation.ID,
-						EvalID:             allocation.EvalID,
-						DesiredStatus:      allocation.DesiredStatus,
-						DesiredDescription: allocation.DesiredDescription,
-						ClientStatus:       allocation.ClientStatus,
-						ClientDescription:  allocation.ClientDescription,
-						JobID:              allocation.JobID,
-						GroupName:          allocation.TaskGroup,
-						TaskName:           taskName,
-						TaskEvent:          taskEvent,
-						TaskState:          taskInfo.State,
-						TaskFailed:         taskInfo.Failed,
-						TaskStartedAt:      &taskInfo.StartedAt,
-						TaskFinishedAt:     &taskInfo.FinishedAt,
-						ModifyTime:         allocation.ModifyTime,
-					}
-
-					f.publish(payload)
-					has_published = true
-				}
-
-				if !has_published && allocation.ModifyTime >= f.lastChangeTime {
-
-					if allocation.ModifyTime > newMax {
-						newMax = allocation.ModifyTime
-					}
-
-					payload := &AllocationUpdate{
-						Name:               allocation.Name,
-						NodeID:             allocation.NodeID,
-						AllocationID:       allocation.ID,
-						EvalID:             allocation.EvalID,
-						DesiredStatus:      allocation.DesiredStatus,
-						DesiredDescription: allocation.DesiredDescription,
-						ClientStatus:       allocation.ClientStatus,
-						ClientDescription:  allocation.ClientDescription,
-						JobID:              allocation.JobID,
-						GroupName:          allocation.TaskGroup,
-						TaskName:           taskName,
-						TaskEvent:          nil,
-						TaskState:          taskInfo.State,
-						TaskFailed:         taskInfo.Failed,
-						TaskStartedAt:      &taskInfo.StartedAt,
-						TaskFinishedAt:     &taskInfo.FinishedAt,
-						ModifyTime:         allocation.ModifyTime,
-					}
-
-					f.publish(payload)
-					has_published = true
-				}
+			if allocation.ModifyIndex <= f.lastChangeIndex {
+				continue
 			}
+
+			if allocation.ModifyIndex > newMax {
+				newMax = allocation.ModifyIndex
+			}
+
+			payload := &AllocationUpdate{
+				Name:               allocation.Name,
+				NodeID:             allocation.NodeID,
+				AllocationID:       allocation.ID,
+				EvalID:             allocation.EvalID,
+				DesiredStatus:      allocation.DesiredStatus,
+				DesiredDescription: allocation.DesiredDescription,
+				ClientStatus:       allocation.ClientStatus,
+				ClientDescription:  allocation.ClientDescription,
+				JobID:              allocation.JobID,
+				TaskGroup:          allocation.TaskGroup,
+				ModifyTime:         allocation.ModifyTime,
+				TaskStates:			allocation.TaskStates,
+			}
+
+			f.publish(payload)
 		}
 
 		// Update WaitIndex and Last Change Time for next iteration
 		q.WaitIndex = meta.LastIndex
-		f.lastChangeTime = newMax
+		f.lastChangeIndex = newMax
 	}
 }
