@@ -139,7 +139,7 @@ func (f *Firehose) watch() {
 	q := &nomad.QueryOptions{
 		WaitIndex:  1,
 		WaitTime:   5 * time.Minute,
-		AllowStale: true,
+		AllowStale: false,
 	}
 
 	newMax := f.lastChangeTime

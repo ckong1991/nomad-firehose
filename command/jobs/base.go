@@ -101,7 +101,7 @@ func (f *FirehoseBase) watch(w WatchJobListFunc) {
 	q := &nomad.QueryOptions{
 		WaitIndex:  f.lastChangeIndex,
 		WaitTime:   5 * time.Minute,
-		AllowStale: true,
+		AllowStale: false,
 	}
 
 	newMax := f.lastChangeIndex
