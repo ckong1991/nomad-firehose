@@ -86,8 +86,9 @@ func (s *SyslogSink) Stop() {
 }
 
 // Put ..
-func (s *SyslogSink) Put(data []byte) error {
+func (s *SyslogSink) Put(key string, data []byte) error {
 	s.putCh <- data
+
 	return nil
 }
 
